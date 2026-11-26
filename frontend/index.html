@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1114">
+  <title>Pulse — HeartSound AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Pulse home">
+        <span class="brand-mark"><svg viewBox="0 0 32 32" fill="none"><path d="M3 16h6l3.1-8.2L18 24l3.2-8H29" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span><b>pulse<span>.</span></b><small>HEART SOUND ANALYSIS</small></span>
+      </a>
+      <div class="top-meta"><span class="live-dot"></span><span>پروژه تحلیل صدای قلب</span><span class="version">نسخه آزمایشی</span></div>
+    </header>
+
+    <section class="intro">
+      <div class="eyebrow"><span></span> INTELLIGENT AUDIO ANALYSIS</div>
+      <h1>صدای قلب را<br><em>دقیق‌تر بشنو.</em></h1>
+      <p>فایل صوتی قلب را بارگذاری کن و سیگنال را برای تحلیل آماده کن.</p>
+    </section>
+
+    <section class="workspace">
+      <div class="main-panel panel">
+        <div class="section-head">
+          <div><span class="step">01 / INPUT</span><h2>فایل صوتی</h2></div>
+          <span class="format">WAV FILE</span>
+        </div>
+
+        <label class="dropzone" id="dropzone" for="audioFile">
+          <input id="audioFile" type="file" accept=".wav,audio/wav">
+          <span class="upload-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M12 15V3m0 0L7.5 7.5M12 3l4.5 4.5M4 15.5v3A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <strong>فایل را اینجا رها کن</strong>
+          <span class="drop-sub">یا برای انتخاب از دستگاه کلیک کن</span>
+          <span class="browse">انتخاب فایل <b>↗</b></span>
+          <span class="file-limit">فرمت پشتیبانی‌شده: WAV</span>
+        </label>
+
+        <div class="selected-file hidden" id="selectedFile">
+          <span class="file-icon">♫</span>
+          <span class="file-info"><b id="fileName">audio.wav</b><small id="fileSize">0 MB</small></span>
+          <button class="remove-file" id="removeFile" type="button" aria-label="حذف فایل">×</button>
+        </div>
+
+        <div class="audio-preview hidden" id="audioPreview">
+          <div class="preview-title"><span>پیش‌نمایش صوت</span><span id="audioDuration">00:00</span></div>
+          <audio id="audioPlayer" controls></audio>
+        </div>
+
+        <div class="wave-wrap">
+          <div class="wave-head"><span>WAVEFORM</span><span id="waveStatus">در انتظار فایل صوتی</span></div>
+          <canvas id="waveform" width="1000" height="170"></canvas>
+        </div>
+
+        <button class="analyze-btn" id="analyzeBtn" disabled>
+          <span>تحلیل سیگنال</span><span class="arrow">←</span>
+        </button>
+        <p class="helper">پس از اتصال بک‌اند، فایل انتخاب‌شده برای پردازش و پیش‌بینی به مدل ارسال می‌شود.</p>
+      </div>
+
+      <aside class="side-column">
+        <div class="panel result-panel">
+          <div class="section-head">
+            <div><span class="step">02 / RESULT</span><h2>نتیجه تحلیل</h2></div>
+            <span class="result-icon">⌁</span>
+          </div>
+          <div class="result-state" id="resultState">
+            <div class="state-orbit"><span>♡</span></div>
+            <b id="resultTitle">آماده دریافت سیگنال</b>
+            <p id="resultDescription">برای شروع، یک فایل صوتی انتخاب کن.</p>
+          </div>
+          <div class="result-divider"></div>
+          <div class="data-row"><span>نام فایل</span><b id="resultFile">—</b></div>
+          <div class="data-row"><span>مدت زمان</span><b id="resultDuration">—</b></div>
+          <div class="data-row"><span>نرخ نمونه‌برداری</span><b id="resultRate">—</b></div>
+          <div class="data-row"><span>وضعیت سیستم</span><b class="status-text" id="systemStatus">آماده</b></div>
+        </div>
+
+        <div class="note-card">
+          <span class="note-symbol">i</span>
+          <div><b>درباره این سامانه</b><p>این پروژه یک نمونه پژوهشی برای تحلیل سیگنال صوتی قلب است و برای تشخیص پزشکی یا تصمیم‌گیری درمانی استفاده نمی‌شود.</p></div>
+        </div>
+      </aside>
+    </section>
+    <footer><span> PULSE / HEARTSOUND AI</span><span>ACADEMIC PROJECT · 2026</span></footer>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
