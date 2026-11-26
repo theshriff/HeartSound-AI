@@ -11,7 +11,7 @@ const ctx = canvas.getContext('2d');
 
 let currentFile = null;
 let audioBuffer = null;
-let audioContext = null;
+let audioObjectURL = null;
 
 drawPlaceholder();
 
@@ -43,6 +43,14 @@ document.getElementById('removeFile').addEventListener('click', () => {
   audioBuffer = null;
   input.value = '';
 
+  if (audioObjectURL) {
+    URL.revokeObjectURL(audioObjectURL);
+    audioObjectURL = null;
+  }
+
+  audioPlayer.removeAttribute('src');
+  audioPlayer.load();
+
   selectedFileBox.classList.add('hidden');
   document.getElementById('audioPreview').classList.add('hidden');
 
@@ -55,6 +63,7 @@ document.getElementById('removeFile').addEventListener('click', () => {
   setText('resultRate', '—');
   setText('systemStatus', 'آماده');
   setText('waveStatus', 'در انتظار فایل صوتی');
+  setText('audioDuration', '00:00');
 
   drawPlaceholder();
 });
@@ -66,15 +75,23 @@ async function handleFile(file) {
   }
 
   currentFile = file;
+  audioBuffer = null;
 
   selectedFileBox.classList.remove('hidden');
+
   document.getElementById('fileName').textContent = file.name;
   document.getElementById('fileSize').textContent =
     `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 
   document.getElementById('audioPreview').classList.remove('hidden');
 
-  audioPlayer.src = URL.createObjectURL(file);
+  if (audioObjectURL) {
+    URL.revokeObjectURL(audioObjectURL);
+  }
+
+  audioObjectURL = URL.createObjectURL(file);
+  audioPlayer.src = audioObjectURL;
+
   analyzeBtn.disabled = false;
 
   setText('resultTitle', 'فایل با موفقیت بارگذاری شد');
@@ -84,37 +101,206 @@ async function handleFile(file) {
   setText('waveStatus', 'در حال خواندن سیگنال...');
 
   try {
-    const AudioContextClass =
-      window.AudioContext || window.webkitAudioContext;
-
-    audioContext = audioContext || new AudioContextClass();
-
-    audioBuffer = await audioContext.decodeAudioData(
-      await file.arrayBuffer()
-    );
+    audioBuffer = await readWavFile(file);
 
     const duration = audioBuffer.duration;
 
     setText('audioDuration', formatTime(duration));
     setText('resultDuration', `${duration.toFixed(2)} ثانیه`);
+
     setText(
       'resultRate',
       `${audioBuffer.sampleRate.toLocaleString('en-US')} Hz`
     );
 
-    setText('waveStatus', 'سیگنال بارگذاری شد');
+    drawWaveform(audioBuffer.samples);
 
-    drawWaveform(audioBuffer.getChannelData(0));
+    setText('waveStatus', 'شکل موج با موفقیت رسم شد');
 
   } catch (error) {
+    audioBuffer = null;
+
     setText('waveStatus', 'خواندن شکل موج ممکن نشد');
     setText(
       'resultDescription',
-      'مرورگر نتوانست پیش‌نمایش صوتی بسازد.'
+      'فرمت WAV پشتیبانی نمی‌شود یا فایل معتبر نیست.'
     );
-    console.error(error);
+
+    drawPlaceholder();
+
+    console.error('WAV reading error:', error);
   }
 }
+
+
+// Read WAV directly without AudioContext
+async function readWavFile(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const view = new DataView(arrayBuffer);
+
+  if (
+    view.byteLength < 44 ||
+    readString(view, 0, 4) !== 'RIFF' ||
+    readString(view, 8, 4) !== 'WAVE'
+  ) {
+    throw new Error('Invalid WAV file');
+  }
+
+  let offset = 12;
+  let format = null;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  while (offset + 8 <= view.byteLength) {
+    const chunkId = readString(view, offset, 4);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkStart = offset + 8;
+
+    if (chunkStart + chunkSize > view.byteLength) {
+      throw new Error('Invalid WAV chunk size');
+    }
+
+    if (chunkId === 'fmt ') {
+      if (chunkSize < 16) {
+        throw new Error('Invalid WAV format chunk');
+      }
+
+      format = {
+        audioFormat: view.getUint16(chunkStart, true),
+        channels: view.getUint16(chunkStart + 2, true),
+        sampleRate: view.getUint32(chunkStart + 4, true),
+        blockAlign: view.getUint16(chunkStart + 12, true),
+        bitsPerSample: view.getUint16(chunkStart + 14, true)
+      };
+
+      // WAVE_FORMAT_EXTENSIBLE
+      if (format.audioFormat === 0xFFFE && chunkSize >= 40) {
+        format.audioFormat = view.getUint16(chunkStart + 24, true);
+      }
+    }
+
+    if (chunkId === 'data' && dataOffset === -1) {
+      dataOffset = chunkStart;
+      dataSize = chunkSize;
+    }
+
+    offset = chunkStart + chunkSize + (chunkSize % 2);
+  }
+
+  if (!format || dataOffset < 0) {
+    throw new Error('WAV format or audio data not found');
+  }
+
+  const {
+    audioFormat,
+    channels,
+    sampleRate,
+    blockAlign,
+    bitsPerSample
+  } = format;
+
+  if (!channels || !sampleRate || !blockAlign) {
+    throw new Error('Invalid WAV parameters');
+  }
+
+  if (![1, 3].includes(audioFormat)) {
+    throw new Error('Unsupported WAV encoding');
+  }
+
+  if (
+    audioFormat === 1 &&
+    ![8, 16, 24, 32].includes(bitsPerSample)
+  ) {
+    throw new Error('Unsupported PCM bit depth');
+  }
+
+  if (
+    audioFormat === 3 &&
+    ![32, 64].includes(bitsPerSample)
+  ) {
+    throw new Error('Unsupported float bit depth');
+  }
+
+  const bytesPerSample = bitsPerSample / 8;
+
+  if (blockAlign < channels * bytesPerSample) {
+    throw new Error('Invalid WAV block alignment');
+  }
+
+  const frameCount = Math.floor(dataSize / blockAlign);
+
+  if (frameCount === 0) {
+    throw new Error('Empty WAV audio data');
+  }
+
+  const samples = new Float32Array(frameCount);
+
+  for (let i = 0; i < frameCount; i++) {
+    let sum = 0;
+
+    for (let ch = 0; ch < channels; ch++) {
+      const pos =
+        dataOffset + i * blockAlign + ch * bytesPerSample;
+
+      let value;
+
+      if (audioFormat === 3) {
+        value = bitsPerSample === 32
+          ? view.getFloat32(pos, true)
+          : view.getFloat64(pos, true);
+
+      } else if (bitsPerSample === 8) {
+        value = (view.getUint8(pos) - 128) / 128;
+
+      } else if (bitsPerSample === 16) {
+        value = view.getInt16(pos, true) / 32768;
+
+      } else if (bitsPerSample === 24) {
+        let raw =
+          view.getUint8(pos) |
+          (view.getUint8(pos + 1) << 8) |
+          (view.getUint8(pos + 2) << 16);
+
+        if (raw & 0x800000) {
+          raw |= 0xFF000000;
+        }
+
+        value = raw / 8388608;
+
+      } else {
+        value = view.getInt32(pos, true) / 2147483648;
+      }
+
+      if (!Number.isFinite(value)) {
+        value = 0;
+      }
+
+      sum += value;
+    }
+
+    samples[i] = sum / channels;
+  }
+
+  return {
+    samples,
+    sampleRate,
+    duration: frameCount / sampleRate,
+    channels,
+    bitsPerSample
+  };
+}
+
+
+function readString(view, offset, length) {
+  let result = '';
+
+  for (let i = 0; i < length; i++) {
+    result += String.fromCharCode(view.getUint8(offset + i));
+  }
+
+  return result;
+}
+
 
 // ONNX browser inference
 analyzeBtn.addEventListener('click', async () => {
@@ -124,6 +310,7 @@ analyzeBtn.addEventListener('click', async () => {
 
   setText('systemStatus', 'در حال تحلیل...');
   setText('resultTitle', 'در حال تحلیل سیگنال');
+
   setText(
     'resultDescription',
     'در حال استخراج ویژگی‌ها و اجرای مدل هوش مصنوعی...'
@@ -136,7 +323,6 @@ analyzeBtn.addEventListener('click', async () => {
 
     const prediction = result.prediction;
 
-    // Read confidence safely
     let confidenceValue = Number(result.confidence);
 
     if (
@@ -144,7 +330,6 @@ analyzeBtn.addEventListener('click', async () => {
       result.probabilities
     ) {
       const probabilities = Array.from(result.probabilities);
-
       const classIndex = prediction === 'Normal' ? 1 : 0;
 
       confidenceValue = Number(probabilities[classIndex]);
@@ -184,6 +369,7 @@ analyzeBtn.addEventListener('click', async () => {
     console.error('Prediction error:', error);
 
     setText('resultTitle', 'خطا در تحلیل سیگنال');
+
     setText(
       'resultDescription',
       error.message || 'اجرای مدل با مشکل مواجه شد.'
@@ -196,26 +382,21 @@ analyzeBtn.addEventListener('click', async () => {
   }
 });
 
+
 function drawPlaceholder() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = '#20383b';
-  ctx.lineWidth = 1;
-
-  for (let y = 20; y < 170; y += 35) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(1000, y);
-    ctx.stroke();
-  }
+  drawGrid();
 
   ctx.strokeStyle = '#4bbba8';
   ctx.lineWidth = 2;
   ctx.beginPath();
 
-  for (let x = 0; x < 1000; x++) {
+  for (let x = 0; x < canvas.width; x++) {
     const y =
-      85 + Math.sin(x * .055) * 5 + Math.sin(x * .17) * 2;
+      canvas.height / 2 +
+      Math.sin(x * 0.055) * 5 +
+      Math.sin(x * 0.17) * 2;
 
     if (x === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -224,45 +405,61 @@ function drawPlaceholder() {
   ctx.stroke();
 }
 
-function drawWaveform(data) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+function drawGrid() {
   ctx.strokeStyle = '#20383b';
   ctx.lineWidth = 1;
 
-  for (let y = 20; y < 170; y += 35) {
+  for (let y = 20; y < canvas.height; y += 35) {
     ctx.beginPath();
     ctx.moveTo(0, y);
-    ctx.lineTo(1000, y);
+    ctx.lineTo(canvas.width, y);
     ctx.stroke();
   }
+}
 
-  const step = Math.max(1, Math.floor(data.length / canvas.width));
+
+function drawWaveform(data) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawGrid();
+
+  const width = canvas.width;
+  const height = canvas.height;
+  const center = height / 2;
+  const amplitude = height * 0.44;
 
   ctx.strokeStyle = '#66d7c3';
   ctx.lineWidth = 1.4;
   ctx.beginPath();
 
-  for (let x = 0; x < canvas.width; x++) {
+  for (let x = 0; x < width; x++) {
+    const start = Math.floor(x * data.length / width);
+    const end = Math.max(
+      start + 1,
+      Math.floor((x + 1) * data.length / width)
+    );
+
     let min = 1;
     let max = -1;
 
-    for (let j = 0; j < step; j++) {
-      const value = data[x * step + j] ?? 0;
-      min = Math.min(min, value);
-      max = Math.max(max, value);
+    for (let i = start; i < end && i < data.length; i++) {
+      min = Math.min(min, data[i]);
+      max = Math.max(max, data[i]);
     }
 
-    ctx.moveTo(x, 85 + min * 75);
-    ctx.lineTo(x, 85 + max * 75);
+    ctx.moveTo(x, center - max * amplitude);
+    ctx.lineTo(x, center - min * amplitude);
   }
 
   ctx.stroke();
 }
 
+
 function setText(id, value) {
   document.getElementById(id).textContent = value;
 }
+
 
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
