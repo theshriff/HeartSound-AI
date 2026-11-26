@@ -1,44 +1,45 @@
 
 from flask import Flask, request, jsonify, send_from_directory
 from pathlib import Path
-from werkzeug.utils import secure_filename
 from scripts.predict import predict_audio
 import tempfile
 import os
 
-BASE_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-
 app = Flask(__name__)
 
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
-# Serve frontend
+SITE_ORIGIN = "https://theshriff.github.io"
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = SITE_ORIGIN
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
 @app.route("/")
 def home():
-    return send_from_directory(FRONTEND_DIR, "index.html")
+    return jsonify({"status": "HeartSound-AI API is running"})
 
 
-@app.route("/<path:filename>")
-def frontend_files(filename):
-    return send_from_directory(FRONTEND_DIR, filename)
+@app.route("/health")
+def health():
+    return jsonify({"status": "online"})
 
 
-# Analyze heart sound
 @app.route("/predict", methods=["POST"])
 def predict():
 
     if "file" not in request.files:
-        return jsonify({"error": "No audio file uploaded."}), 400
+        return jsonify({"error": "No audio file uploaded"}), 400
 
-    file = request.files["file"]
+    audio_file = request.files["file"]
 
-    if not file.filename:
-        return jsonify({"error": "No file selected."}), 400
-
-    filename = secure_filename(file.filename)
-
-    if not filename.lower().endswith(".wav"):
-        return jsonify({"error": "Only WAV files are supported."}), 400
+    if not audio_file.filename.lower().endswith(".wav"):
+        return jsonify({"error": "Only WAV files are supported"}), 400
 
     temp_path = None
 
@@ -47,16 +48,15 @@ def predict():
             suffix=".wav",
             delete=False
         ) as temp_file:
-
             temp_path = temp_file.name
-            file.save(temp_path)
+            audio_file.save(temp_path)
 
         result = predict_audio(temp_path)
 
         return jsonify(result)
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
 
     finally:
         if temp_path and os.path.exists(temp_path):
@@ -64,4 +64,4 @@ def predict():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    app.run()
