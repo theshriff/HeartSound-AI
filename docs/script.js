@@ -15,10 +15,16 @@ let audioObjectURL = null;
 
 drawPlaceholder();
 
+
+// File selection
 input.addEventListener('change', () => {
-  if (input.files[0]) handleFile(input.files[0]);
+  if (input.files[0]) {
+    handleFile(input.files[0]);
+  }
 });
 
+
+// Drag and drop
 ['dragenter', 'dragover'].forEach(eventName =>
   dropzone.addEventListener(eventName, e => {
     e.preventDefault();
@@ -35,9 +41,14 @@ input.addEventListener('change', () => {
 
 dropzone.addEventListener('drop', e => {
   const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
+
+  if (file) {
+    handleFile(file);
+  }
 });
 
+
+// Remove selected file
 document.getElementById('removeFile').addEventListener('click', () => {
   currentFile = null;
   audioBuffer = null;
@@ -48,6 +59,7 @@ document.getElementById('removeFile').addEventListener('click', () => {
     audioObjectURL = null;
   }
 
+  audioPlayer.pause();
   audioPlayer.removeAttribute('src');
   audioPlayer.load();
 
@@ -68,6 +80,8 @@ document.getElementById('removeFile').addEventListener('click', () => {
   drawPlaceholder();
 });
 
+
+// Handle WAV file
 async function handleFile(file) {
   if (!file.name.toLowerCase().endsWith('.wav')) {
     alert('لطفاً فایل با فرمت WAV انتخاب کن.');
@@ -76,10 +90,12 @@ async function handleFile(file) {
 
   currentFile = file;
   audioBuffer = null;
+  analyzeBtn.disabled = true;
 
   selectedFileBox.classList.remove('hidden');
 
   document.getElementById('fileName').textContent = file.name;
+
   document.getElementById('fileSize').textContent =
     `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 
@@ -87,12 +103,12 @@ async function handleFile(file) {
 
   if (audioObjectURL) {
     URL.revokeObjectURL(audioObjectURL);
+    audioObjectURL = null;
   }
 
-  audioObjectURL = URL.createObjectURL(file);
-  audioPlayer.src = audioObjectURL;
-
-  analyzeBtn.disabled = false;
+  audioPlayer.pause();
+  audioPlayer.removeAttribute('src');
+  audioPlayer.load();
 
   setText('resultTitle', 'فایل با موفقیت بارگذاری شد');
   setText('resultDescription', 'سیگنال آماده تحلیل است.');
@@ -101,29 +117,58 @@ async function handleFile(file) {
   setText('waveStatus', 'در حال خواندن سیگنال...');
 
   try {
+    // Read original WAV file
     audioBuffer = await readWavFile(file);
 
     const duration = audioBuffer.duration;
 
     setText('audioDuration', formatTime(duration));
-    setText('resultDuration', `${duration.toFixed(2)} ثانیه`);
+
+    setText(
+      'resultDuration',
+      `${duration.toFixed(2)} ثانیه`
+    );
 
     setText(
       'resultRate',
       `${audioBuffer.sampleRate.toLocaleString('en-US')} Hz`
     );
 
+    // Convert original samples to browser-compatible PCM WAV
+    const playableWav = createPlayableWav(
+      audioBuffer.samples,
+      audioBuffer.sampleRate
+    );
+
+    // Create audio URL
+    audioObjectURL = URL.createObjectURL(playableWav);
+
+    audioPlayer.src = audioObjectURL;
+    audioPlayer.load();
+
+    // Draw waveform from original samples
     drawWaveform(audioBuffer.samples);
+
+    analyzeBtn.disabled = false;
 
     setText('waveStatus', 'شکل موج با موفقیت رسم شد');
 
-  } catch (error) {
-    audioBuffer = null;
-
-    setText('waveStatus', 'خواندن شکل موج ممکن نشد');
     setText(
       'resultDescription',
-      'فرمت WAV پشتیبانی نمی‌شود یا فایل معتبر نیست.'
+      'سیگنال آماده تحلیل و پخش است.'
+    );
+
+  } catch (error) {
+    audioBuffer = null;
+    currentFile = null;
+
+    analyzeBtn.disabled = true;
+
+    setText('waveStatus', 'خواندن شکل موج ممکن نشد');
+
+    setText(
+      'resultDescription',
+      error.message || 'فرمت WAV پشتیبانی نمی‌شود.'
     );
 
     drawPlaceholder();
@@ -175,7 +220,10 @@ async function readWavFile(file) {
 
       // WAVE_FORMAT_EXTENSIBLE
       if (format.audioFormat === 0xFFFE && chunkSize >= 40) {
-        format.audioFormat = view.getUint16(chunkStart + 24, true);
+        format.audioFormat = view.getUint16(
+          chunkStart + 24,
+          true
+        );
       }
     }
 
@@ -291,11 +339,66 @@ async function readWavFile(file) {
 }
 
 
+// Convert Float32 samples to standard PCM 16-bit WAV
+function createPlayableWav(samples, sampleRate) {
+  const dataSize = samples.length * 2;
+
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  function writeString(offset, text) {
+    for (let i = 0; i < text.length; i++) {
+      view.setUint8(offset + i, text.charCodeAt(i));
+    }
+  }
+
+  // RIFF header
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+
+  // Format chunk
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+
+  // Data chunk
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  // Float32 to signed PCM 16-bit
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(
+      -1,
+      Math.min(1, samples[i])
+    );
+
+    const value = sample < 0
+      ? sample * 32768
+      : sample * 32767;
+
+    view.setInt16(44 + i * 2, value, true);
+  }
+
+  return new Blob([buffer], {
+    type: 'audio/wav'
+  });
+}
+
+
+// Read string from DataView
 function readString(view, offset, length) {
   let result = '';
 
   for (let i = 0; i < length; i++) {
-    result += String.fromCharCode(view.getUint8(offset + i));
+    result += String.fromCharCode(
+      view.getUint8(offset + i)
+    );
   }
 
   return result;
@@ -317,6 +420,7 @@ analyzeBtn.addEventListener('click', async () => {
   );
 
   try {
+    // IMPORTANT: Send original file to ONNX pipeline
     const result = await window.predictHeartSound(currentFile);
 
     console.log('Heart Sound Analysis:', result);
@@ -337,8 +441,10 @@ analyzeBtn.addEventListener('click', async () => {
 
     if (prediction === 'Normal') {
       setText('resultTitle', 'الگوی طبیعی');
+
     } else if (prediction === 'Abnormal') {
       setText('resultTitle', 'الگوی غیرطبیعی');
+
     } else {
       throw new Error('مدل نتیجه معتبری برنگرداند.');
     }
@@ -348,12 +454,15 @@ analyzeBtn.addEventListener('click', async () => {
       confidenceValue >= 0 &&
       confidenceValue <= 1
     ) {
-      const confidence = (confidenceValue * 100).toFixed(1);
+      const confidence = (
+        confidenceValue * 100
+      ).toFixed(1);
 
       setText(
         'resultDescription',
         `نتیجه مدل · اطمینان ${confidence}٪`
       );
+
     } else {
       setText(
         'resultDescription',
@@ -383,6 +492,7 @@ analyzeBtn.addEventListener('click', async () => {
 });
 
 
+// Draw placeholder waveform
 function drawPlaceholder() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -398,14 +508,18 @@ function drawPlaceholder() {
       Math.sin(x * 0.055) * 5 +
       Math.sin(x * 0.17) * 2;
 
-    if (x === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    if (x === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
   }
 
   ctx.stroke();
 }
 
 
+// Draw waveform grid
 function drawGrid() {
   ctx.strokeStyle = '#20383b';
   ctx.lineWidth = 1;
@@ -419,6 +533,7 @@ function drawGrid() {
 }
 
 
+// Draw actual waveform
 function drawWaveform(data) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -434,7 +549,10 @@ function drawWaveform(data) {
   ctx.beginPath();
 
   for (let x = 0; x < width; x++) {
-    const start = Math.floor(x * data.length / width);
+    const start = Math.floor(
+      x * data.length / width
+    );
+
     const end = Math.max(
       start + 1,
       Math.floor((x + 1) * data.length / width)
@@ -443,24 +561,37 @@ function drawWaveform(data) {
     let min = 1;
     let max = -1;
 
-    for (let i = start; i < end && i < data.length; i++) {
+    for (
+      let i = start;
+      i < end && i < data.length;
+      i++
+    ) {
       min = Math.min(min, data[i]);
       max = Math.max(max, data[i]);
     }
 
-    ctx.moveTo(x, center - max * amplitude);
-    ctx.lineTo(x, center - min * amplitude);
+    ctx.moveTo(
+      x,
+      center - max * amplitude
+    );
+
+    ctx.lineTo(
+      x,
+      center - min * amplitude
+    );
   }
 
   ctx.stroke();
 }
 
 
+// Update text elements
 function setText(id, value) {
   document.getElementById(id).textContent = value;
 }
 
 
+// Format audio duration
 function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
