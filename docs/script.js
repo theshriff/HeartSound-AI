@@ -10,7 +10,7 @@ let audioBuffer = null;
 let audioContext = null;
 
 // مسیر API بک‌اند Flask را در صورت نیاز تغییر بده.
-const API_URL = 'http://127.0.0.1:5000/predict';
+const API_URL = 'https://heartsound-ai.onrender.com/predict';
 
 drawPlaceholder();
 
